@@ -1,0 +1,484 @@
+---
+title: '**Assignment 1**'
+author: "Nina Spreitzer"
+date: "University of Amsterdam \n &nbsp;  \n November, 15, 2021 "
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+highlight: tango
+header-includes:
+#- \usepackage{xcolor}
+#- \usepackage{color}
+- \usepackage{fancyhdr,color}
+- \usepackage{lipsum}
+- \fancyfoot[CE] {\thepage}
+subtitle: Applied Forecasting in Complex Systems 2021
+fontsize: 11pt
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  cache = TRUE,
+  dev.args = list(pointsize = 11)
+)
+options(digits = 3, width = 60)
+library(fpp3)
+library(latex2exp)
+library(stringr)
+library(data.table)
+```
+
+## **Exercise 1**\
+It is important to first generally state why data transformation and adjustment are in some cases useful. Transformation can make historical data more consistent and therefore leads to a simpler time series. The advantages of this is an easier to model and more accurat forecasts.
+
+#### 1.1
+The first analyzed dataset is called `global_economy` containing economic indicators from different countries from 1960 to 2017. To plot the Gross Domestic Product (GDP)  of the United States a filter was used to take only rows that have `United States` in the column `Country`. 
+
+Looking at the original plot the GDP is presented in dollars. It is clear to see that the data has an obvious upward trend. Around the year 2008 the GDP drops, which is seen as a cycle. This behavior is most certainly due to the global financial crisis from 2007 to 2008. 
+```{r, echo=FALSE, out.width="50%", fig.align = "center"}
+US <- global_economy  %>%
+    filter(Country == "United States") 
+
+US %>% autoplot(GDP, colour='black') + 
+  labs(title = "GDP of United States", x = "Years", y = "GDP in Dollar $ ") +
+  scale_x_continuous(breaks = scales::extended_breaks(20))
+```
+
+As the data is affected by population changes it might make sense to transform the dataframe in the sense that it shows the GDP per capita instead of the total. For this reason the GDP values are divided by the Population, which are also included in the dataset. This transformation removes the effects of population changes. Looking at the transformed data, the plot does not seem to change compared to the original one. Therefore, we can conclude that the GDP value is not affected by population changes. 
+
+```{r, echo=FALSE, out.width="50%", fig.align = "center"}
+US %>% autoplot(GDP/Population, colour='black') + 
+  labs(title = "GDP per Capita of United States", x = "Years", y = "GDP in Dollar $ ") +
+  scale_x_continuous(breaks = scales::extended_breaks(20))
+```
+
+
+```{r, echo=FALSE, out.width="50%", fig.align = "center"}
+lambda <- US %>%
+  features(GDP/Population, features = guerrero) %>%
+  pull(lambda_guerrero)
+```
+
+As the data shows increasing variation with the level of the series, a mathematical transformation can be useful. The Box-Cox transformation includes logarithms and power transformations and depends on the parameter $\lambda$. In order to find the best lambda for the transformation, the `guerrero` feature is used.
+
+In this case using $\lambda=0.39$, makes the seasonal variation about the same across the whole series. The plot below shows the transformed data. 
+
+```{r, echo=FALSE, out.width="50%", fig.align = "center"}
+US %>% autoplot(box_cox(GDP/Population, lambda)) + 
+  labs(title = "GDP per Capita of United States", x = "Years", y = "GDP in Dollar $ ") +
+  scale_x_continuous(breaks = scales::extended_breaks(20))
+```
+
+#### 1.2
+The next time plot is taken from the dataset `aus_livestock`, which contains the australian meat production for human consumption. The observed plot shows data filtered by the `Animal` column, selecting only `Bulls, bullocks and steers` from the state `Victoria`. The column `Count` respectively holds the amount of animal slaughtered. 
+
+By plotting the bulls, bullocks and steers slaughtered throughot the years, one can see that the data has seasonality and also some cyclic behavior. An obvious trend cannot be detected over this timeframe. 
+
+```{r, echo=FALSE, out.width="50%", fig.align = "center"}
+victoria <- aus_livestock  %>%
+    filter(State == "Victoria") %>%
+    filter(Animal == "Bulls, bullocks and steers")
+victoria  %>%
+    autoplot(Count)+
+  labs(title = "Australian Livestock Slaughter", x= "Month")
+```
+
+```{r, results='hide', echo=FALSE}
+lambda2 <- victoria %>%
+  features(Count, features = guerrero) %>%
+  pull(lambda_guerrero)
+```
+As the time series, does not show similar variation over all levels, again a Box-Cox transformation can be applied. The most suitable $\lambda$ is for this series $-0.07$. As this value is very close to zero, we could also use the natural logarithm, which would result in a very similar plot. 
+
+```{r, results='hide', echo=FALSE, out.width="50%", fig.align = "center"}
+victoria %>%
+  autoplot(box_cox(Count, lambda2))+
+  labs(title = "Australian Livestock Slaughter", x= "Month", y = "Transformed Count")
+```
+
+#### 1.3
+The third datset is the `aus_production`, holding quaterly data about Australien production for different commodities. In order to inspect gas production over the years, the column `Gas` is plotted against the column `Quarter`. The time plot shows a obvious seasonality. Additionally, since 1970 an upwards trend can be observed.
+
+```{r, echo=FALSE, out.width="50%", fig.align = "center"}
+aus_production %>%
+    autoplot(Gas)+
+  labs(title = "Australian Quarterly Gas Production", x= "Quarters", y = "Gas (Petajoules)")
+```
+```{r, results='hide', echo=FALSE}
+lambda3 <- aus_production %>%
+  features(Gas, features = guerrero) %>%
+  pull(lambda_guerrero)
+```
+For this time series it is very obvious that the variation differs between levels. The variation grows with time. Therefore a mathematical transformation is useful. Again, the best lambda for Box-Cox  is found by making use of the `guerrero` feature. In this case $\lambda= 0.12$. By appplying this transformation the seasonal variation becomes about the same across the levels.
+
+```{r, echo=FALSE, out.width="50%", fig.align = "center"}
+aus_production %>%
+  autoplot(box_cox(Gas, lambda3))+
+  labs(title = "Australian Gas Production", x= "Quarters", y = "Transformed Gas production")
+```
+
+## **Exercise 2**\
+For this exercise, we use the dataset `aus_retail` filtering the column `Industry` after `Takeaway food turnover`. The dataset holds information about each state individually. As the value of takeaway food turnover for whole Australia is wanted, the data is summarized by taking the sum of all states. The sum value is then stored in a column named `Turnover_sum`. 
+
+Before the forecasting model is trained, it is always important to look at the plotted time series first to get an idea how the data is distributed. The sum of turnovers in Australia show an obvious positive trend, with seasonal behavior. 
+
+```{r, echo=FALSE, out.width="50%", fig.align = "center"}
+takeaway <- (aus_retail) %>%
+    filter(Industry == "Takeaway food services")
+
+takeaway_sum<-takeaway %>%
+    index_by(Month) %>%
+    summarise(Turnover_sum = sum(Turnover))
+
+takeaway_sum%>%
+    autoplot(Turnover_sum)+
+  labs(
+    y = "Food Turnover",
+    x = "Month",
+    title = "Food Turnover for entire Australia")
+```
+```{r, results='hide', echo=FALSE}
+lambda4 <- takeaway_sum %>%
+  features(Turnover_sum, features = guerrero) %>%
+  pull(lambda_guerrero)
+```
+
+It is also noticable that the variation increases over time. Therefore, a mathematical transformation using Box-Cox would lead to better forecasting, as it significantly stabilizes the variation. Using the `guerrero` feature, it gives use a $\lambda$ of $0.15$. The following plot shows the time series with stabilized variation. When predicting is performed with the trasnformed dataset, one need to keep in mind to back-transform. For this exercise the data will not be transformed, as it does not ask to perform transformations, but it is important to keep in mind that using Box-Cox would seem appropriate for this dataset.
+
+```{r, echo=FALSE, out.width="50%", fig.align = "center"}
+takeaway_sum %>%
+  autoplot(box_cox(Turnover_sum, lambda4))+
+  labs(
+    y = "Transformed Food Turnover",
+    title = "Transformed Food Turnover for entire Australia",
+    x = "Month")
+```
+
+#### 2.1
+The data is split into a training and testing set. Training set holds the values from 1982-2014 and the last four years (2015-2018) are used for test purposes. The following output confirms that the datasets hold the correct years. 
+
+```{r, echo=FALSE, out.width="50%"}
+train_set <- (takeaway_sum) %>%
+    filter(year(Month) <= 2014)
+
+test_set <- (takeaway_sum) %>%
+    filter(year(Month) > 2014)
+
+printf <- function(...) cat(sprintf(...))
+printf("Train dataset holds data from %d to %d. \n", min(year(train_set$Month)), max(year(train_set$Month))) 
+printf("Test dataset holds data from %d to %d. \n", min(year(test_set$Month)), max(year(test_set$Month))) 
+```
+
+#### 2.3)
+The following benchmark models are used to fit the training set: Mean, Drift, Naïve, Seasonal Naïve. 
+
+The following figure shows the different forecast methods applied to the Australian food turnover using data only to the end of 2014. 
+
+```{r, echo=FALSE, out.width="50%", fig.align = "center"}
+turnover_fit <- train_set %>%
+model(
+Mean = MEAN(Turnover_sum), Naive = NAIVE(Turnover_sum), Seasonal_naive = SNAIVE(Turnover_sum), Drift = RW(Turnover_sum ~ drift()))
+
+turnover_fc <- turnover_fit %>% forecast()
+turnover_fc %>%
+  autoplot(train_set, level = NULL) +
+  autolayer(
+    filter_index(takeaway_sum, "2014" ~ .),
+    colour = "grey"
+  ) +
+  labs(
+    y = "Australian Food Turnover Rate",
+    title = "Forecasts for Food Turnover",
+    subtitle = "(Jan 2015 - Dec 2018)") +
+  guides(colour = guide_legend(title = "Forecast"))
+```
+#### 2.2)
+In order to compute the accuracy of each forecast method, four different accuracy measures are computed, which are two scale-dependent errors (RMSE and MAE), one percentage error (MAPE) and one scaled error (MASE). The table below holds the corresponding accuarcy values.
+
+```{r, echo=FALSE}
+acc <- accuracy(turnover_fc, takeaway_sum)
+acc$ME<- NULL
+acc$MPE<- NULL
+acc$RMSSE<- NULL
+acc$ACF1<- NULL
+acc
+```
+By analysing the data, one can conclude that  the Naïve performs with lowest number of error values for most of accuracy measures. Only MAPE results in a lower number for the Seasonal Naïve. As the number is still close to the value of Naïve, we can conclude that the Naïve is the best performing model.
+
+As the Naïve method seems to perform the best, the residuals of this model are plotted in the figure below. The residuals plotted in the first graph are not completely centered around zero and show a certain pattern. The histogram on the bottom right shows that the residuals are not necessarily normally distributed. In order to estimate if the time series behaves like white noise, the ACF graph on the left bottom corner is taken into account. White noise means that the time series show no autocorrelation (=0). One can see that the ACF plot holds some autocrrelation values which are significantly different from zero. Therefore it does not behave like white noise. As a conclusion, it is obvious that there is more information hidden in the data that could be exploited and the forecasts is systematically biased.
+
+```{r, echo=FALSE, out.width="80%", fig.align = "center"}
+test_set %>%
+model(naive = NAIVE(Turnover_sum)) %>%
+gg_tsresiduals()
+```
+
+### Exercise 3
+
+#### 3.1)
+
+The dataset `olympic_running` contains data on winning times of each running distance of the Olympic Games. The winning times also distinguish between male and female. The following plot shows how the times evolved over time.
+
+As the Olympic Games are only hold every four years, the data is given for every four years beginning at 1896 up to 2016. In the 1910s and 1940s there is missing data as the games got canceled due to world war I and II. Due to inequal gender treatment and the fioght for women rights, women particiation was allowed later at the Olympic Games. As a consequence the dataset holds women winning times only at later years. 
+
+Overall one can analyse an obvious downward trend in the winning times, independently of Length and Gender. This means that the performance increased noticable over the years. In the olympic games in 1896 we can notice an outlier in the 100m, 400m, 800m and 1500m events.
+
+```{r, echo=FALSE, out.width="90%", fig.align = "center"}
+olympic_running %>% as_tibble %>%
+  ggplot(aes(x=Year, y = Time, colour = Sex)) +
+  geom_line() +
+  facet_wrap(~ Length, scales = "free_y")
+```
+
+#### 3.2)
+
+In order to fit a regression line to the running time data for each event, the `TSLM()` function is used which fits a linear regression model to time series data. In order to get the average rate the winning times decreased per year, the trend variable is specified by using the `trend()` special. Notice that this automatically comes up with the trend across the levels of the dataset. As the levels are every four years, the estimated value of the trend needs to be dicided by four, in order to receive the trend estimate per year. The following table shows the calculated average rate per event.
+
+
+```{r, echo=FALSE, out.width="40%"}
+fit <- olympic_running %>% 
+     model(TSLM(Time ~ trend())) 
+trend <- tidy(fit) %>% 
+  filter(term=='trend()')
+trend$avg_rate_year <- round(trend$estimate / 4, 3)
+
+trend%>%
+  select(Length, Sex, .model, avg_rate_year)
+```
+
+#### 3.3)
+The following series of plots show the residuals of the model against the year of each event first filtered by men and then by women. When looking at the plots, it is obvious that the resdiuals show a pattern. Therefore the residuals are not randomly spreaded, which indicates that there is still information in the residuals hidden, which is not represented in the model. Therefore, the fitted lines are not the most suitable model to predict the winning times for each race.
+
+```{r, echo=FALSE, out.width="60%", fig.align = "center", fig.height = 6}
+fit_residuals <- fit %>% residuals()
+fit_residuals %>%
+    filter(Sex == "men") %>%
+    ggplot(aes(x = Year, y = .resid, colour = Length)) +
+    geom_point() + facet_grid(vars(Length), scales = 'free_y')+
+  labs(
+    y = "Residuals",
+    title = "Residuals against Year for Men")
+```
+
+
+```{r, echo=FALSE, out.width="60%", fig.align = "center", fig.height = 6}
+fit_residuals %>%
+    filter(Sex == "women") %>%
+    ggplot(aes(x = Year, y = .resid, colour = Length)) +
+    geom_point() + facet_grid(vars(Length), scales = 'free_y')+
+  labs(
+    y = "Residuals",
+    title = "Residuals against Year for Women")
+```
+
+
+#### 3.4)
+In this section the regression line is used to predict the winning times for each distance in the 2020 Olympics. We still keep in mind that the conclusion of 3.3 was, that the fitted regression line might not be the most suitable model for the prediction. The `forecast()` function gives a point estimation for the prediction. As only the predictions of 2020 are needed, we will exclude 2024. In order to come up with the prediction interval with a 95% confidence the `mutate()` and `hilo()` function is used. The following table gives the mean of the prediction and the prediction interval. 
+
+```{r, echo=FALSE, out.width="70%"}
+ forecast <- forecast(fit)%>%
+    filter(Year==2020) %>%
+    mutate(PI = hilo(Time, 95)) %>%
+    select(-.model)
+
+forecast$Time<-NULL
+forecast
+```
+
+The plot below shows the visualization of the single point mean estimate and the intervals for the 95% and 80% prediction interval for the 100m winning times for male. Notice that the smaller the confidence is the smaller the interval gets. These plots can be done for all events and each sex respectively.
+
+```{r, out.width="50%", fig.align = "center", echo=FALSE}
+fc_fit <- forecast(fit)
+fc_fit  %>% filter(Sex == "men", Length == 100) %>% autoplot(olympic_running)+
+  labs(
+    title = "Winning Time Prediction for 100m Sprint Male")
+```
+
+
+The following assumptions are made in these calculations:
+
+- errors have a mean of zero 
+- errors are not autocorrelated
+- errors are unrelated to the predictor variable (=Year)
+- it is useful if errors are normally distributed with $N(0, \sigma^2)$ 
+- outliers are spotted and linear regression is aropriate
+- when scatterplotting residuals against Year or the predicted Times, there is secific pattern or any values too far from the band\\
+\newpage
+
+
+
+## Appendix
+
+```{r, results='hide', fig.show='hide'}
+
+################ Code for Exercise 1.1 ################
+US <- global_economy  %>%
+    filter(Country == "United States") 
+
+US %>% autoplot(GDP, colour='black') + 
+  labs(title = "GDP of United States", x = "Years", y = "GDP in Dollar $ ") +
+  scale_x_continuous(breaks = scales::extended_breaks(20))
+
+US %>% autoplot(GDP/Population, colour='black') + 
+  labs(title = "GDP per Capita of United States", x = "Years", y = "GDP in Dollar $ ") +
+  scale_x_continuous(breaks = scales::extended_breaks(20))
+
+lambda <- US %>%
+  features(GDP/Population, features = guerrero) %>%
+  pull(lambda_guerrero)
+
+US %>% autoplot(box_cox(GDP/Population, lambda)) + 
+  labs(title = "GDP per Capita of United States", 
+       x = "Years", 
+       y = "GDP in Dollar $ ") +
+  scale_x_continuous(breaks = scales::extended_breaks(20))
+
+################ Code for Exercise 1.2 ################
+victoria <- aus_livestock  %>%
+    filter(State == "Victoria") %>%
+    filter(Animal == "Bulls, bullocks and steers")
+victoria  %>%
+    autoplot(Count)+
+  labs(title = "Australian Livestock Slaughter", x= "Month")
+
+lambda2 <- victoria %>%
+  features(Count, features = guerrero) %>%
+  pull(lambda_guerrero)
+
+victoria %>%
+  autoplot(box_cox(Count, lambda2))+
+  labs(title = "Australian Livestock Slaughter", 
+       x= "Month", y = "Transformed Count")
+
+################ Code for Exercise 1.3 ################
+aus_production %>%
+    autoplot(Gas)+
+  labs(title = "Australian Quarterly Gas Production", 
+       x= "Quarters", y = "Gas (Petajoules)")
+
+lambda3 <- aus_production %>%
+  features(Gas, features = guerrero) %>%
+  pull(lambda_guerrero)
+
+aus_production %>%
+  autoplot(box_cox(Gas, lambda3))+
+  labs(title = "Australian Gas Production", 
+       x= "Quarters", y = "Transformed Gas production")
+
+################ Code for Exercise 2.1 ################
+takeaway <- (aus_retail) %>%
+    filter(Industry == "Takeaway food services")
+
+takeaway_sum<-takeaway %>%
+    index_by(Month) %>%
+    summarise(Turnover_sum = sum(Turnover))
+
+takeaway_sum%>%
+    autoplot(Turnover_sum)+
+  labs(
+    y = "Food Turnover",
+    x = "Month",
+    title = "Food Turnover for entire Australia")
+
+lambda4 <- takeaway_sum %>%
+  features(Turnover_sum, features = guerrero) %>%
+  pull(lambda_guerrero)
+
+takeaway_sum %>%
+  autoplot(box_cox(Turnover_sum, lambda4))+
+  labs(
+    y = "Transformed Food Turnover",
+    title = "Transformed Food Turnover for entire Australia",
+    x = "Month")
+
+train_set <- (takeaway_sum) %>%
+    filter(year(Month) <= 2014)
+test_set <- (takeaway_sum) %>%
+    filter(year(Month) > 2014)
+
+printf <- function(...) cat(sprintf(...))
+printf("Train dataset holds data from %d to %d. \n",
+       min(year(train_set$Month)), max(year(train_set$Month))) 
+printf("Test dataset holds data from %d to %d. \n",
+       min(year(test_set$Month)), max(year(test_set$Month)))
+
+################ Code for Exercise 2.2 ################
+turnover_fit <- train_set %>%
+model(
+Mean = MEAN(Turnover_sum), Naive = NAIVE(Turnover_sum),
+Seasonal_naive = SNAIVE(Turnover_sum), Drift = RW(Turnover_sum ~ drift()))
+
+turnover_fc <- turnover_fit %>% forecast()
+turnover_fc %>%
+  autoplot(train_set, level = NULL) +
+  autolayer(
+    filter_index(takeaway_sum, "2014" ~ .),
+    colour = "grey"
+  ) +
+  labs(
+    y = "Australian Food Turnover Rate",
+    title = "Forecasts for Food Turnover",
+    subtitle = "(Jan 2015 - Dec 2018)") +
+  guides(colour = guide_legend(title = "Forecast"))
+################ Code for Exercise 2.3 ################
+acc <- accuracy(turnover_fc, takeaway_sum)
+acc$ME<- NULL
+acc$MPE<- NULL
+acc$RMSSE<- NULL
+acc$ACF1<- NULL
+acc
+
+test_set %>%
+model(naive = NAIVE(Turnover_sum)) %>%
+gg_tsresiduals()
+
+################ Code for Exercise 3.1 ################
+olympic_running %>% as_tibble %>%
+  ggplot(aes(x=Year, y = Time, colour = Sex)) +
+  geom_line() +
+  facet_wrap(~ Length, scales = "free_y")
+
+################ Code for Exercise 3.2 ################
+fit <- olympic_running %>% 
+     model(TSLM(Time ~ trend())) 
+trend <- tidy(fit) %>% 
+  filter(term=='trend()')
+trend$avg_rate_year <- round(trend$estimate / 4, 3)
+trend%>%
+  select(Length, Sex, .model, avg_rate_year)
+
+################ Code for Exercise 3.3 ################
+fit_residuals <- fit %>% residuals()
+fit_residuals %>%
+    filter(Sex == "men") %>%
+    ggplot(aes(x = Year, y = .resid, colour = Length)) +
+    geom_point() + facet_grid(vars(Length), scales = 'free_y')+
+  labs(
+    y = "Residuals",
+    title = "Residuals against Year for Men")
+
+fit_residuals %>%
+    filter(Sex == "women") %>%
+    ggplot(aes(x = Year, y = .resid, colour = Length)) +
+    geom_point() + facet_grid(vars(Length), scales = 'free_y')+
+  labs(
+    y = "Residuals",
+    title = "Residuals against Year for Women")
+
+################ Code for Exercise 3.4 ################
+ forecast <- forecast(fit)%>%
+    filter(Year==2020) %>%
+    mutate(PI = hilo(Time, 95)) %>%
+    select(-.model)
+
+forecast$Time<-NULL
+forecast
+
+fc_fit <- forecast(fit)
+fc_fit  %>% filter(Sex == "men", Length == 100) %>% autoplot(olympic_running)+
+  labs(
+    title = "Winning Time Prediction for 100m Sprint Male")
+```
