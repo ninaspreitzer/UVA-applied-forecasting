@@ -1,0 +1,425 @@
+---
+title: '**Assignment 2**'
+author: "Nina Spreitzer"
+date: "University of Amsterdam \n &nbsp;  \n November, 22, 2021 "
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+highlight: tango
+header-includes:
+#- \usepackage{xcolor}
+#- \usepackage{color}
+- \usepackage{fancyhdr,color}
+- \usepackage{lipsum}
+- \fancyfoot[CE] {\thepage}
+subtitle: Applied Forecasting in Complex Systems 2021
+fontsize: 11pt
+---
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  cache = TRUE,
+  dev.args = list(pointsize = 11),
+  fig.pos= "h"
+)
+options(digits = 3, width = 60)
+library(fpp3)
+library(latex2exp)
+library(stringr)
+library(data.table)
+library(tsibble)
+library(forecast)
+library(ggplot2)
+```
+
+## **Exercise 1**\
+
+#### 1.1
+The dataset `global_economy` includes data of the population size of each country. For this exercise, we will focus on Afghanistan. Figure 1 shows how the population evolved over time.
+
+```{r, echo=FALSE, out.width="50%", fig.align = "center", fig.cap ="Afghanistan Population over the years."}
+afg<-global_economy %>% 
+    filter(Country=='Afghanistan') %>%
+    select('Country', 'Population')
+
+afg%>%
+    autoplot()
+```
+
+Overall, an obvious upward trend can be noticed by looking at the plot. Around the year 1980 the population size drops and has an decreasing trend for approximatey 7 years. After the year 1987 the upward trend continues. This observation results in a cyclic bahavior around 1980-1990. This behavior is most certainly due to the Soviet-Afghan war from 24 December 1979 – 15 February 1989. 
+
+#### 1.2
+First a linear trend model is fitted into the population data by using `TSLM()`function. This results in the following linear model: $f(x)=4798904+425774*x$ with $f(x)$ being the forecast of population size depended on $x$, the corresponding year.
+
+Secondly a piecewise linear trend model is fitted. This is done, by introducing knots where the slope of $f(x)$ can change. The knots used for this example are at 1980 and 1989, corresonding of the changing trend discussed previously. Figure 2 shows the two fitted models compared to the actual data. 
+```{r, echo=FALSE}
+fit_pop <- afg %>%
+  model(
+    linear = TSLM(Population ~ trend()),
+    piecewise = TSLM(Population ~ trend(knots = c(1980, 1985)))
+  )
+```
+
+```{r, echo=FALSE, out.width="50%", fig.align = "center", fig.cap ="Fitted Linear vs. Piecewise Linear models"}
+afg %>%
+  autoplot() +
+  geom_line(data = fitted(fit_pop),
+            aes(y = .fitted, colour = .model))
+```
+
+It can be observed that the piecewise linear model better fits the data, as the knots take the cyclic behavior into account. The linear model seems to not fit the datapoints very well. To compare the models in more detail, the residuals of both are plotted against the years in Figure 3. It is obvious that the residuals of the piecewise linear model are more centered around zero and show a more random pattern than the resiudals of the linear model. It can be concluded that there is more information hidden in the data which is not represented in the linear model.
+
+```{r, echo=FALSE, out.width="60%", fig.align = "center", fig.cap ="Fitted Linear Residuas vs. Piecewise Linear Residuals"}
+fit_residuals <- fit_pop %>% residuals()
+fit_residuals %>%
+autoplot()
+```
+
+#### 1.3
+Forecasts are generated from the fitted models in Exercise 1.2. The forecast is drawn for the next five years after the last oberservation presented in the dataset. The result is shown in Figure 4. As already seen in the previous exercise, the estimated forecast from the piecewise linear trend model seems to be more appropriate for the following years. Also, when comparing the confidence intervals (CI) from both models, it can be observed that the piecewise linear trend model provides a more accurate estimation as the CIs are much more narrow.
+```{r, echo=FALSE, out.width="50%", fig.align = "center", fig.cap ="Fitted Linear vs. Piecewise Linear models forecasts for next 5 years."}
+fc_pop<-forecast(fit_pop,h=5) %>% select(-.model)
+
+afg %>%
+  autoplot(Population) +
+  geom_line(data = fitted(fit_pop),
+            aes(y = .fitted, colour = .model)) +
+  labs(title = "Afhganistan Population", x = "Years",
+       y = "Population") +
+  autolayer(fc_pop, alpha = 0.5, level = 95)
+```
+
+
+## **Exercise 2**\
+#### 2.1
+For this exercise, the dataset `aus_arrival` filtered by arrivals to Australia from New Zealand is used. The time series is plotted in Figure 5 and shows seasonality with an upward linear trend. 
+
+```{r, echo=FALSE, out.width="50%", fig.align = "center", fig.cap ="Timeseries of arrivals in Australia from New Zealand."}
+NZ <- aus_arrivals %>%
+    filter(Origin=="NZ") 
+NZ %>% autoplot()
+```
+
+The following code creates a training set that witholds the last 2 years, as well as a testing set including the remaining two years. Since the time series contains levels represented by quarters, two years is equal to eight quarters.
+
+```{r}
+train_set <- (NZ) %>% filter(Quarter <= max(Quarter)-8)
+test_set <- (NZ) %>% filter(Quarter > max(Quarter)-8)
+```
+
+In general, an additive method should be chosen when seasonal variations are roughly constant through the series, but when seasonal variations are changing proportional to the level the multiplicative method is preferred. As the number of arrivals over the years show a seasonal variation that increases over the time periods, the Holt Winter’s multiplicative method is more suitable to capture the characteristics of this data. Consequently, the model is fitted using this approach and the corresponding forecast of the test set is shown in Figure 6.
+
+```{r}
+fit <- train_set %>%
+  model(
+    multiplicative = ETS(Arrivals ~ error("M") + trend("A") + season("M")))
+fc <- fit %>% forecast(test_set)
+```
+
+```{r, echo=FALSE, out.width="50%", fig.align = "center", fig.cap =".", , fig.cap ="Forecast with Holt Winter’s multiplicative method."}
+fc %>% autoplot(NZ, level = NULL) 
+```
+
+
+#### 2.2)
+The following exercise compares four different models in order to find the best forecast for the arrivals in Australia from New Zealand. The correspnding forecasts are shown in Figure 7. 
+```{r}
+compare <- anti_join(NZ, train_set, by = c("Quarter", "Origin", "Arrivals"))
+
+fit <- train_set %>%
+    model(
+    'ETS' = ETS(Arrivals), 
+    'Additive to Log transf.' = ETS(log(Arrivals)~error('A')+trend('A')+season('A')),
+    'Seasonal Naive' = SNAIVE(Arrivals),
+    'STL ETS Log transf.' = decomposition_model(STL(log(Arrivals)),ETS(season_adjust))
+    )
+fc <- fit %>% forecast(test_set)
+```
+
+```{r, echo=FALSE, out.width="60%", fig.align = "center", fig.cap ="Forecast comparing four different models."}
+fc %>% 
+    autoplot(level=NULL)+
+    autolayer(compare, Arrivals)+
+    guides(colour=guide_legend(title="Forecast"))
+```
+
+In order to compare the  models, different metrics can be used. Table 1 provides a comparison by using the `accuracy()` function. It can be concluded that the ETS model performce the best, as the values of the errors presented in the accuracy table achieve the smallest number compared to the other models.
+
+```{r, echo=FALSE, out.width="50%", fig.align = "center"}
+fc_acc <- fc %>% accuracy(NZ) %>% select(.model, .type, RMSE, MAE, MAPE, MASE)
+knitr::kable(fc_acc, caption = "Forecast comparisson different models.")
+```
+
+By plotting the residuals of the best perfmorning model (ETS), it can be concluded that they behave like white noise, as non of the lags in the ACF plot is significantly different from zero as they are all under the bound. The residuals don't show a specific pattern and are more or less centered around zero. They seem to behave like a normal distribution.
+
+```{r, echo=FALSE, out.width="60%", fig.align = "center", fig.cap ="Residuals for the ETS model."}
+best_model <- fit %>% select ('ETS')
+best_model %>% gg_tsresiduals()
+```
+\newpage
+Table 2 presents the values of Ljung Box’s test retrieved by using the feature `ljung_box`, which tests the claim that the residuals don't behave like white noise. As the p-value is greater than 0.05, there is no significant evidence that the residuals are not white noise and one can stick with the assumption. 
+```{r, echo=FALSE}
+ljung <- augment(best_model) %>% 
+    features(.resid, ljung_box)
+
+knitr::kable(ljung,
+             caption = "Ljung Box's Test result.")
+```
+
+#### 2.3)
+The models are now compared using cross-validation with an initial set of 36 and a step size of 3. The last three rows are subtracted to make sure that the forecast is not skewed. 
+
+```{r}
+nz_cv <- NZ %>% 
+    slice(1:(n()-3)) %>%
+    stretch_tsibble(.init=36, .step=3)
+``` 
+
+Again, we compare the models using the accuracy table resented in Table 3. From the time series cross-validation, the best method is "Additive Log transf." as it achieves the smallest numbers in the error metrics. The previous best model "ETS" is the second best performing.
+
+```{r, echo=FALSE, out.width="50%", fig.align = "center"}
+nz_acc <- nz_cv %>%
+    model(
+    'ETS' = ETS(Arrivals),
+    'Additive Log transf.' = ETS(log(Arrivals)~error('A')+trend('A')+season('A')),
+    'Seasonal Naive' = SNAIVE(Arrivals),
+    'STL ETS Log transf.' = decomposition_model(STL(log(Arrivals)),ETS(season_adjust))) %>% 
+    forecast(h=3) %>% 
+    accuracy(NZ)
+
+nz_acc <- nz_acc %>% select(.model, .type, RMSE, MAE, MAPE, MASE)
+
+knitr::kable(nz_acc, caption = "Forecast comparisson using time series cross-validation.")
+
+```
+
+### Exercise 3
+
+#### 3.1)
+The  dataset `global_economy` contains economic indicators from 1960 to 2017. By plotting the GDP  of the United States the time series shows an increasing trend. I will use GDP/10.000.000 as it provides a more interpretable y-axis. Figure 9 shows how GDP evolved over time. 
+
+```{r, echo=FALSE, out.width="50%", fig.align = "center", fig.cap ="USA GDP"}
+US <- global_economy %>% 
+    filter(Country=='United States') %>%
+    select('Country','Year', 'GDP')
+
+US$GDP <- (US$GDP)/10000000
+
+US%>%autoplot() + 
+  labs(y = "GDP/10.000.000")
+```
+
+As the GDP increase looks rather exponentional, a Box-Cox transformation is used to make the seasonal variation about the same across the whole series. The `guerrero` feature finds the best $\lambda$, which is in this case $0.282$. The transformed time-series is shown in Figure 10.
+
+```{r, out.width="50%", fig.align = "center", echo=FALSE, fig.cap ="Box-Cox Transformation of USA GDP"}
+lambda <- US %>%
+  features(GDP, features = guerrero) %>%
+  pull(lambda_guerrero)
+US$boxcox<- box_cox(US$GDP, lambda)
+US %>%
+  autoplot(box_cox(GDP, lambda)) + 
+  labs(y = "GDP/10.000.000")
+```
+To fit an ARIMA model the function `ARIMA()` finds automaticatically a suitable model. From the output generated, we see that the function chose the following paramteres $p=1$, $d=1$ and $q=0$. That means the autoregression part has an order of one and moving average an order of 0 and we involve 1 degree of first differencing. 
+
+```{r}
+ US %>% model(ARIMA(boxcox))
+```
+
+#### 3.2)
+When experimenting with the numbers of orders ($p$ and $q$), other plausible models can be generated. In this exercise different combination of $p$ and $q$ equal to $0,1,2,3$ are used. 
+
+When looking at the AICc of all generated modells, it can be concluded that the best performing model is still ARIMA(1,1,0). So we will stay with the automated model found in Exercise 3.1. 
+
+```{r, out.width="50%", fig.align = "center", echo=FALSE, , fig.cap ="Comparison of different ARIMA models"}
+fit <- US %>%
+  model(arima110 = ARIMA(boxcox ~ pdq(1,1,0)),
+        arima011 = ARIMA(boxcox ~ pdq(0,1,1)),
+        arima210 = ARIMA(boxcox ~ pdq(2,1,0)),
+        arima012 = ARIMA(boxcox ~ pdq(0,1,2)),
+        arima310 = ARIMA(boxcox ~ pdq(3,1,0)),
+        arima013 = ARIMA(boxcox ~ pdq(0,1,3)),
+        arima111 = ARIMA(boxcox ~ pdq(1,1,1)),
+        arima212 = ARIMA(boxcox ~ pdq(2,1,2)),
+        arima313 = ARIMA(boxcox ~ pdq(3,1,3)),
+        arima112 = ARIMA(boxcox ~ pdq(1,1,2)),
+        arima211 = ARIMA(boxcox ~ pdq(2,1,1)),
+        arima112 = ARIMA(boxcox ~ pdq(1,1,2)),
+        arima311 = ARIMA(boxcox ~ pdq(3,1,1)),
+        arima113 = ARIMA(boxcox ~ pdq(1,1,3)),
+        arima213 = ARIMA(boxcox ~ pdq(2,1,3)),
+        arima312 = ARIMA(boxcox ~ pdq(3,1,2)))
+
+knitr::kable(glance(fit) %>% arrange(AICc) %>% select(.model:BIC),
+             caption = "Comparisson ARIMA models.")
+```
+
+The resiuals of ARIMA(1,1,0) are shown in Figure 11. As we can see by analysing the ACF, there is no lag significantly different than zero, which leads to the conclution that it behaves like white noise as there is no autocorrelation. The resiudals don't show any specific pattern, but the count shows that the residuals are not normally distributed and skewed to negative numbers.
+
+```{r, out.width="60%", fig.align = "center", echo=FALSE, fig.cap="Residuals for ARIMA(1,1,0)"}
+fit %>% select('arima1')  %>% gg_tsresiduals()
+```
+
+#### 3.3)
+In this exercise, the forecasts of ARIMA and ETS models are compared. For fitting the ETS model no transformation should be used. ARIMA model is used once with box-cox transformed data and once with no transformation data.
+```{r}
+fit_compare <- US %>%
+  model('ARIMA' =  ARIMA(box_cox(GDP, lambda) ~ pdq(1,1,0)),
+        'ARIMA2'=ARIMA(GDP),
+        'ETS' = ETS(GDP))
+```
+
+By using the `forecast()` function with the `hilo()` feature we obtain point estimates for each of the three models, as well as a 95% confidence interval for 2018 and 2019 presented in Table 5. It can be observed that the forecast point estimates of the  models with non-transformed data result in similar numbers. However, when looking at the CIs, it is obvious that the ETS model has a much wider CI than the ARIMA models. A more narrow CI is desirable, as it gives a bigger certainty for the point estimate. To conclude ARIMA models give a more certain forecast than ETS as the CIs are smaller. 
+
+```{r, out.width="50%", fig.align = "center", echo=FALSE}
+fc_table <- forecast(fit_compare)%>%
+  hilo(level = c(95)) %>% 
+  unpack_hilo("95%")
+fc_table$GDP <- NULL
+fc_table$Country <- NULL
+
+knitr::kable(fc_table, caption = "Forecast comparisson ARIMA and ETS.")
+```
+
+
+\newpage
+
+## Appendix
+
+```{r, results='hide', fig.show='hide'}
+################ Code for Exercise 1.1 ################
+afg<-global_economy %>% 
+    filter(Country=='Afghanistan') %>%
+    select('Country', 'Population')
+afg%>%autoplot()
+
+################ Code for Exercise 1.2 ################
+fit_pop <- afg %>%
+  model(linear = TSLM(Population ~ trend()),
+    piecewise = TSLM(Population ~ trend(knots = c(1980, 1985))))
+
+afg %>%
+  autoplot() +
+  geom_line(data = fitted(fit_pop),
+            aes(y = .fitted, colour = .model))
+
+fit_residuals <- fit_pop %>% residuals()
+fit_residuals %>%autoplot()
+
+################ Code for Exercise 1.3################
+fc_pop<-forecast(fit_pop,h=5) %>% select(-.model)
+afg %>% autoplot(Population) +
+  geom_line(data = fitted(fit_pop),
+            aes(y = .fitted, colour = .model)) +
+  labs(title = "Afhganistan Population", x = "Years",
+       y = "Population") +
+  autolayer(fc_pop, alpha = 0.5, level = 95)
+
+################ Code for Exercise 2.1################
+NZ <- aus_arrivals %>% filter(Origin=="NZ") 
+NZ %>% autoplot()
+
+train_set <- (NZ) %>% filter(Quarter <= max(Quarter)-8)
+test_set <- (NZ) %>% filter(Quarter > max(Quarter)-8)
+
+fit <- train_set %>% model(
+    multiplicative = ETS(Arrivals ~ error("M") + trend("A") + season("M")))
+fc <- fit %>% forecast(test_set)
+fc %>% autoplot(NZ, level = NULL) 
+
+################ Code for Exercise 2.2################
+compare <- anti_join(NZ, train_set, by = c("Quarter", "Origin", "Arrivals"))
+
+fit <- train_set %>%
+    model('ETS' = ETS(Arrivals), 
+    'Additive to Log transf.' = ETS(log(Arrivals)~error('A')+trend('A')+season('A')),
+    'Seasonal Naive' = SNAIVE(Arrivals),
+    'STL ETS Log transf.' = decomposition_model(STL(log(Arrivals)),
+                                                ETS(season_adjust)))
+fc <- fit %>% forecast(test_set)
+
+fc %>% 
+    autoplot(level=NULL)+
+    autolayer(compare, Arrivals)+
+    guides(colour=guide_legend(title="Forecast"))
+
+fc_acc <- fc %>% accuracy(NZ) %>% 
+  select(.model, .type, RMSE, MAE, MAPE, MASE)
+knitr::kable(fc_acc, caption = "Forecast comparisson different models.")
+best_model <- fit %>% select ('ETS')
+best_model %>% gg_tsresiduals()
+
+ljung <- augment(best_model) %>% features(.resid, ljung_box)
+
+knitr::kable(ljung,
+             caption = "Ljung Box's Test result.")
+
+################ Code for Exercise 2.3################
+nz_cv <- NZ %>% 
+    slice(1:(n()-3)) %>%
+    stretch_tsibble(.init=36, .step=3)
+
+nz_acc <- nz_cv %>%
+    model(
+    'ETS' = ETS(Arrivals),
+    'Additive Log transf.' = ETS(log(Arrivals)~error('A')+trend('A')+season('A')),
+    'Seasonal Naive' = SNAIVE(Arrivals),
+    'STL ETS Log transf.' = decomposition_model(STL(log(Arrivals)),
+                                                ETS(season_adjust))) %>% 
+    forecast(h=3) %>% accuracy(NZ)
+nz_acc <- nz_acc %>% select(.model, .type, RMSE, MAE, MAPE, MASE)
+knitr::kable(nz_acc, caption = "Forecast comparisson using time series cross-validation.")
+
+################ Code for Exercise 3.1################
+US <- global_economy %>% 
+    filter(Country=='United States') %>%
+    select('Country','Year', 'GDP')
+US$GDP <- (US$GDP)/10000000
+US%>%autoplot() + labs(y = "GDP/10.000.000")
+
+lambda <- US %>%
+  features(GDP, features = guerrero) %>%
+  pull(lambda_guerrero)
+US$boxcox<- box_cox(US$GDP, lambda)
+US %>% autoplot(box_cox(GDP, lambda)) + 
+  labs(y = "GDP/10.000.000")
+US %>% model(ARIMA(boxcox))
+
+################ Code for Exercise 3.2################
+ fit <- US %>%
+  model(arima1 = ARIMA(boxcox ~ pdq(1,1,0)),
+        arima2 = ARIMA(boxcox ~ pdq(0,1,1)),
+        arima3 = ARIMA(boxcox ~ pdq(2,1,0)),
+        arima4 = ARIMA(boxcox ~ pdq(0,1,2)),
+        arima5 = ARIMA(boxcox ~ pdq(3,1,0)),
+        arima6 = ARIMA(boxcox ~ pdq(0,1,3)),
+        arima7 = ARIMA(boxcox ~ pdq(1,1,1)),
+        arima8 = ARIMA(boxcox ~ pdq(2,1,2)),
+        arima9 = ARIMA(boxcox ~ pdq(3,1,3)),
+        arima10 = ARIMA(boxcox ~ pdq(1,1,2)),
+        arima11 = ARIMA(boxcox ~ pdq(2,1,1)),
+        arima12 = ARIMA(boxcox ~ pdq(1,1,2)),
+        arima13 = ARIMA(boxcox ~ pdq(3,1,1)),
+        arima14 = ARIMA(boxcox ~ pdq(1,1,3)),
+        arima15 = ARIMA(boxcox ~ pdq(2,1,3)),
+        arima16 = ARIMA(boxcox ~ pdq(3,1,2)))
+knitr::kable(glance(fit) %>% arrange(AICc) %>% select(.model:BIC),
+             caption = "Comparisson ARIMA models.")
+fit %>% select('arima1')  %>% gg_tsresiduals()
+ 
+################ Code for Exercise 3.3################
+fit_compare <- US %>%
+  model('ARIMA' =  ARIMA(box_cox(GDP, lambda) ~ pdq(1,1,0)),
+        'ARIMA2'=ARIMA(GDP),
+        'ETS' = ETS(GDP))
+
+fc_table <- forecast(fit_compare)%>%
+  hilo(level = c(95)) %>% unpack_hilo("95%")
+fc_table$GDP <- NULL
+fc_table$Country <- NULL
+
+knitr::kable(fc_table, caption = "Forecast comparisson ARIMA and ETS.")
+````
